@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,7 +24,12 @@ func (sr *statusRecorder) WriteHeader(statusCode int) {
 
 func main() {
 	http.HandleFunc("/", handler)
-	log.Fatal(http.ListenAndServe(":8888", nil))
+	port := os.Getenv("SERVER_PORT")
+	if port == "" {
+		port = "8888"
+	}
+	log.Printf("Starting server on port %s", port)
+	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +43,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		staticFilePath := filepath.Join(".", r.URL.Path)
 		http.ServeFile(sr, r, staticFilePath)
 	} else {
-		sr.Header().Set("Content-Type", "application/json")
+		delay := os.Getenv("API_REQUEST_DELAY_MS")
+		delayInMs, err := strconv.Atoi(delay)
+		if err == nil {
+			time.Sleep(time.Duration(delayInMs) * time.Millisecond)
+		}
 		handleJSONRequest(sr, r)
 	}
 }
