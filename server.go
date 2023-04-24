@@ -11,20 +11,40 @@ import (
 	"time"
 )
 
+type statusRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (sr *statusRecorder) WriteHeader(statusCode int) {
+	sr.statusCode = statusCode
+	sr.ResponseWriter.WriteHeader(statusCode)
+}
+
 func main() {
 	http.HandleFunc("/", handler)
 	log.Fatal(http.ListenAndServe(":8888", nil))
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	sr := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+	defer func() {
+		log.Printf("%s - %s %s %d %v", r.RemoteAddr, r.Method, r.URL.Path, sr.statusCode, time.Since(start))
+	}()
+
+	if strings.HasPrefix(r.URL.Path, "/html/") {
+		staticFilePath := filepath.Join(".", r.URL.Path)
+		http.ServeFile(sr, r, staticFilePath)
+	} else {
+		sr.Header().Set("Content-Type", "application/json")
+		handleJSONRequest(sr, r)
+	}
+}
+
+func handleJSONRequest(w http.ResponseWriter, r *http.Request) {
 	origin := r.Header.Get("Origin")
 	method := r.Method
-	start := time.Now()
-	statusCode := -1
-
-	defer func() {
-		log.Printf("%s - %s %s %d %v", r.RemoteAddr, method, r.URL.Path, statusCode, time.Since(start))
-	}()
 
 	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding")
 	w.Header().Set("Access-Control-Allow-Origin", origin)
@@ -32,8 +52,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 	if method == "OPTIONS" {
-		statusCode = http.StatusOK
-		w.WriteHeader(statusCode)
+		w.WriteHeader(http.StatusOK)
 		return
 	}
 
@@ -44,33 +63,29 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	jsonData, err := os.ReadFile(jsonFilePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			statusCode = http.StatusNotFound
+			w.WriteHeader(http.StatusNotFound)
 			fmt.Fprintf(w, "{\"error\": \"File not found\"}")
 		} else {
-			statusCode = http.StatusInternalServerError
+			w.WriteHeader(http.StatusInternalServerError)
 			fmt.Fprintf(w, "{\"error\": \"Internal Server Error\"}")
 		}
-		w.WriteHeader(statusCode)
 		return
 	}
 
 	var result map[string]interface{}
 	err = json.Unmarshal(jsonData, &result)
 	if err != nil {
-		statusCode = http.StatusInternalServerError
+		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, "{\"error\": \"Internal Server Error\"}")
-		w.WriteHeader(statusCode)
 		return
 	}
 
 	response, err := json.Marshal(result)
 	if err != nil {
-		statusCode = http.StatusInternalServerError
+		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, "{\"error\": \"Internal Server Error\"}")
-		w.WriteHeader(statusCode)
 		return
 	}
 
 	w.Write(response)
-	statusCode = http.StatusOK
 }
