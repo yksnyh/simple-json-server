@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -34,9 +35,21 @@ func main() {
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	body := new(bytes.Buffer)
+	body.ReadFrom(r.Body)
 	sr := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 	defer func() {
-		log.Printf("%s - %s %s %d %v", r.RemoteAddr, r.Method, r.URL.Path, sr.statusCode, time.Since(start))
+		logLine := fmt.Sprintf("%s - %s %s %d %v", r.RemoteAddr, r.Method, r.URL.Path, sr.statusCode, time.Since(start))
+
+		if os.Getenv("DETAILED_LOGGING") == "1" {
+			headers := make([]string, 0, len(r.Header))
+			for name, header := range r.Header {
+				headers = append(headers, fmt.Sprintf("%v: %v", name, header))
+			}
+			logLine += ", " + strings.Join(headers, ", ")
+			logLine += ", Body: " + body.String()
+		}
+		log.Print(logLine)
 	}()
 
 	if strings.HasPrefix(r.URL.Path, "/html/") {
@@ -53,17 +66,18 @@ func handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleJSONRequest(w http.ResponseWriter, r *http.Request) {
-	origin := r.Header.Get("Origin")
 	method := r.Method
-
-	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding")
-	w.Header().Set("Access-Control-Allow-Origin", origin)
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Credentials", "true")
 	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
-	if method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
+	if os.Getenv("CORS") == "1" {
+		origin := r.Header.Get("Origin")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding")
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+		if method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 	}
 
 	jsonFilePath := filepath.Join("data", strings.ToLower(method))
