@@ -52,10 +52,21 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		log.Print(logLine)
 	}()
 
-	if strings.HasPrefix(r.URL.Path, "/html/") {
-		staticFilePath := filepath.Join(".", r.URL.Path)
-		http.ServeFile(sr, r, staticFilePath)
-	} else {
+	staticContentDirs := os.Getenv("STATIC_CONTENT_DIRS")
+	if staticContentDirs == "" {
+		staticContentDirs = "html"
+	}
+
+	found := false
+	for _, dir := range strings.Split(staticContentDirs, ",") {
+		if strings.HasPrefix(r.URL.Path, "/"+dir+"/") {
+			staticFilePath := filepath.Join(".", r.URL.Path)
+			http.ServeFile(sr, r, staticFilePath)
+			found = true
+			break
+		}
+	}
+	if !found {
 		delay := os.Getenv("API_REQUEST_DELAY_MS")
 		delayInMs, err := strconv.Atoi(delay)
 		if err == nil {
