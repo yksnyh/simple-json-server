@@ -2,15 +2,17 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
+)
+
+const (
+	DEFAULT_CONTENTTYPE = "application/json;charset=UTF-8"
 )
 
 type statusRecorder struct {
@@ -23,7 +25,16 @@ func (sr *statusRecorder) WriteHeader(statusCode int) {
 	sr.ResponseWriter.WriteHeader(statusCode)
 }
 
+var responseConf []ResponseConfig
+
 func main() {
+	conf, err := ReadResponseConfig()
+	if err != nil {
+		log.Println("Not found config file", err)
+	} else {
+		responseConf = conf
+	}
+
 	http.HandleFunc("/", handler)
 	port := os.Getenv("SERVER_PORT")
 	if port == "" {
@@ -31,6 +42,7 @@ func main() {
 	}
 	log.Printf("Starting server on port %s", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
+	// log.Fatal(http.ListenAndServeTLS(":"+port, "debug.crt", "debug.key", nil))
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
@@ -39,7 +51,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	body.ReadFrom(r.Body)
 	sr := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
 	defer func() {
-		logLine := fmt.Sprintf("%s - %s %s %d %v", r.RemoteAddr, r.Method, r.URL.Path, sr.statusCode, time.Since(start))
+		logLine := fmt.Sprintf("%s - %s %s %d %v", r.RemoteAddr, r.Method, r.URL.String(), sr.statusCode, time.Since(start))
 
 		if os.Getenv("DETAILED_LOGGING") == "1" {
 			headers := make([]string, 0, len(r.Header))
@@ -52,46 +64,49 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		log.Print(logLine)
 	}()
 
+	conf := MatchResponseConfig(r, responseConf)
+	if conf.Delay > 0 {
+		time.Sleep(time.Duration(conf.Delay) * time.Millisecond)
+	}
+
 	staticContentDirs := os.Getenv("STATIC_CONTENT_DIRS")
 	if staticContentDirs == "" {
 		staticContentDirs = "html"
 	}
-
-	found := false
 	for _, dir := range strings.Split(staticContentDirs, ",") {
 		if strings.HasPrefix(r.URL.Path, "/"+dir+"/") {
 			staticFilePath := filepath.Join(".", r.URL.Path)
 			http.ServeFile(sr, r, staticFilePath)
-			found = true
-			break
+			return
 		}
 	}
-	if !found {
-		delay := os.Getenv("API_REQUEST_DELAY_MS")
-		delayInMs, err := strconv.Atoi(delay)
-		if err == nil {
-			time.Sleep(time.Duration(delayInMs) * time.Millisecond)
-		}
-		handleJSONRequest(sr, r)
-	}
-}
 
-func handleJSONRequest(w http.ResponseWriter, r *http.Request) {
-	method := r.Method
-	w.Header().Set("Content-Type", "application/json;charset=UTF-8")
 	if os.Getenv("CORS") == "1" {
 		origin := r.Header.Get("Origin")
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding")
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Credentials", "true")
-		if method == "OPTIONS" {
+		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 	}
+	handleApiRequest(sr, r, conf)
+}
 
-	jsonFilePath := filepath.Join("data", strings.ToLower(method))
+func handleApiRequest(w http.ResponseWriter, r *http.Request, conf ResponseConfig) {
+	if len(conf.ContentType) > 0 {
+		w.Header().Set("Content-Type", conf.ContentType)
+	} else {
+		w.Header().Set("Content-Type", DEFAULT_CONTENTTYPE)
+	}
+
+	if conf.HttpStatus > 0 && conf.HttpStatus != 200 {
+		w.WriteHeader(conf.HttpStatus)
+	}
+
+	jsonFilePath := filepath.Join("data", strings.ToLower(r.Method))
 	jsonFilePath += r.URL.Path
 	jsonFilePath += ".json"
 
@@ -106,21 +121,5 @@ func handleJSONRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-
-	var result map[string]interface{}
-	err = json.Unmarshal(jsonData, &result)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, "{\"error\": \"Internal Server Error\"}")
-		return
-	}
-
-	response, err := json.Marshal(result)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, "{\"error\": \"Internal Server Error\"}")
-		return
-	}
-
-	w.Write(response)
+	w.Write(jsonData)
 }

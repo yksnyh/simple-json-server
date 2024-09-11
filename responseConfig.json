@@ -1,0 +1,15 @@
+[
+  {
+    "path": "/delay-test",
+    "delay": 10000,
+    "httpStatus": 408
+  },
+  {
+    "path": "/httpstatus-test",
+    "httpStatus": 201
+  },
+  {
+    "path": "/contenttype-test",
+    "contentType": "application/json"
+  }
+]
